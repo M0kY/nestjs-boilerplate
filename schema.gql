@@ -1,0 +1,61 @@
+# ------------------------------------------------------
+# THIS FILE WAS AUTOMATICALLY GENERATED (DO NOT MODIFY)
+# ------------------------------------------------------
+
+type User {
+  id: ID!
+  username: String!
+  displayName: String!
+  email: String!
+  firstName: String
+  lastName: String
+  role: Role!
+  activated: Boolean!
+  enabled2fa: Boolean!
+  loginAttempts: Float!
+  locked: Boolean!
+  disabled: Boolean!
+  createdAt: DateTime!
+  updatedAt: DateTime!
+}
+
+"""User roles"""
+enum Role {
+  USER
+  ADMIN
+}
+
+"""
+A date-time string at UTC, such as 2019-12-03T09:54:33Z, compliant with the date-time format.
+"""
+scalar DateTime
+
+type ChangePasswordData {
+  id: ID!
+  passwordChanged: Boolean!
+}
+
+type Activate2faData {
+  secret: String!
+  method: String!
+  uri: String!
+}
+
+type Query {
+  me: User
+  getAllUsers: [User!]!
+}
+
+type Mutation {
+  changePassword(token: String, newPassword: String!, currentPassword: String!): ChangePasswordData
+  updateProfile(data: UpdateProfileInputType!): User
+  activate2fa: Activate2faData!
+  verifyOrDeactivate2fa(enable: Boolean!, token: String!): Boolean!
+}
+
+"""User profile data which can be updated"""
+input UpdateProfileInputType {
+  email: String
+  firstName: String
+  lastName: String
+}

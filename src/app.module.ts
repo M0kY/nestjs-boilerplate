@@ -1,10 +1,45 @@
 import { Module } from '@nestjs/common';
-import { AppController } from './app.controller';
-import { AppService } from './app.service';
+import { ConfigModule, ConfigService } from '@nestjs/config';
+import { GraphQLModule } from '@nestjs/graphql';
+import { TypeOrmModule } from '@nestjs/typeorm';
+import { UsersModule } from './users/users.module';
+import { CryptoModule } from './crypto/crypto.module';
+import configuration from './config/configuration';
 
 @Module({
-  imports: [],
-  controllers: [AppController],
-  providers: [AppService],
+  imports: [
+    ConfigModule.forRoot({
+      load: [configuration],
+      isGlobal: true,
+    }),
+    TypeOrmModule.forRootAsync({
+      imports: [ConfigModule],
+      inject: [ConfigService],
+      useFactory: async (configService: ConfigService) => ({
+        type: 'postgres',
+        host: configService.get('database.host'),
+        port: configService.get<number>('database.port'),
+        database: configService.get('database.name'),
+        username: configService.get('database.username'),
+        password: configService.get('database.password'),
+        entities: ['dist/**/*.entity{.ts,.js}'],
+        synchronize: configService.get('database.synchronize'),
+        dropSchema: true,
+        retryAttempts: 10,
+        retryDelay: 1000,
+        autoLoadEntities: true,
+      }),
+    }),
+    GraphQLModule.forRoot({
+      cors: true,
+      installSubscriptionHandlers: true,
+      autoSchemaFile: 'schema.gql',
+    }),
+    UsersModule,
+    UsersModule,
+    CryptoModule,
+  ],
+  controllers: [],
+  providers: [],
 })
 export class AppModule {}
