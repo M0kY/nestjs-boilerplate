@@ -6,13 +6,10 @@ import {
   Mutation,
   ObjectType,
   Resolver,
-  Context,
 } from '@nestjs/graphql';
-import { Injectable } from '@nestjs/common';
+import { Injectable, UseGuards } from '@nestjs/common';
 
 import { authenticator } from 'otplib';
-
-import { ResolverContext } from '../types/ResolverContext';
 
 // import {
 //   CustomError,
@@ -32,6 +29,10 @@ import { UpdateProfileInputType } from './dto/profile-input.dto';
 import { User2faDTO } from './dto/user-2fa.dto';
 import { CryptoService } from '../crypto/crypto.service';
 import { ConfigService } from '@nestjs/config';
+import { AuthService } from 'src/auth/auth.service';
+import { RegisterInputType } from './dto/register-input.dto';
+import { CurrentUser } from '../auth/decorators/current-user.decorator';
+import { GqlAuthGuard } from 'src/auth/guards/jwt-auth.guard';
 
 @ObjectType()
 class ChangePasswordData {
@@ -51,24 +52,103 @@ class Activate2faData {
   uri: string;
 }
 
+@ObjectType()
+class LoginReturnType extends User {
+  @Field()
+  access_token: string;
+}
+
 @Injectable()
 @Resolver(User)
 export class UsersResolver {
   constructor(
     private readonly userService: UsersService,
+    private readonly authService: AuthService,
     private readonly configService: ConfigService,
     private readonly cryptoService: CryptoService,
   ) {}
 
+  @Mutation(() => User, { nullable: true })
+  async register(
+    @Args() { username, email, password }: RegisterInputType,
+  ): Promise<User> {
+    const user = await this.userService.createUser({
+      username,
+      email,
+      password,
+    });
+
+    // Mail.sendPasswordResetMail(user);
+
+    return user;
+  }
+
+  @Mutation(() => LoginReturnType, { nullable: true })
+  async login(
+    @Args('username') username: string,
+    @Args('password') password: string,
+    @Args('token', { nullable: true }) token?: string,
+  ) {
+    const user = await this.userService.findByUsernameOrEmail(username);
+
+    if (!user) {
+      // throw new CustomError(getErrorByKey(ERROR_INVALID_LOGIN));
+      throw new Error();
+    }
+
+    const valid = this.cryptoService.comparePasswords(password, user.password);
+
+    if (!valid) {
+      await this.userService.failedLoginAttempt(user);
+      // throw new CustomError(getErrorByKey(ERROR_INVALID_LOGIN));
+      throw new Error();
+    }
+
+    if (user.enabled2fa) {
+      if (!token) {
+        await this.userService.failedLoginAttempt(user);
+        // throw new CustomError(getErrorByKey(ERROR_2FA_TOKEN_REQUIRED));
+        throw new Error();
+      }
+
+      if (!user.secret2fa) {
+        // logger.error(getErrorByKey(ERROR_NO_2FA_SECRET).message, 'LOGIN');
+        // throw new CustomError(getErrorByKey(ERROR_NO_2FA_SECRET));
+        throw new Error();
+      }
+
+      const isTokenValid = authenticator.verify({
+        token,
+        secret: user.secret2fa,
+      });
+
+      if (!isTokenValid) {
+        await this.userService.failedLoginAttempt(user);
+        // throw new CustomError(getErrorByKey(ERROR_INVALID_2FA_TOKEN));
+        throw new Error();
+      }
+    }
+
+    await this.userService
+      .resetLoginAttempts(user.id)
+      .then(() => (user.loginAttempts = 0));
+
+    const jwtTokens = await this.authService.login(user);
+
+    return { ...user, access_token: jwtTokens.access_token };
+  }
+
   // @Authorized()
   // @UseMiddleware(PermissionsMiddleware)
+  @UseGuards(GqlAuthGuard)
   @Query(() => User, { nullable: true })
-  async me(@Context() ctx: ResolverContext): Promise<User | void> {
-    return await this.userService.findById('1');
+  async me(@CurrentUser() user: User): Promise<User | null> {
+    return await this.userService.findById(user.id);
   }
 
   // @Authorized(Role.ADMIN)
   // @UseMiddleware(PermissionsMiddleware)
+  @UseGuards(GqlAuthGuard)
   @Query(() => [User])
   async getAllUsers(): Promise<User[]> {
     return (await this.userService.getAll()) || [];
@@ -76,15 +156,14 @@ export class UsersResolver {
 
   // @Authorized()
   // @UseMiddleware(PermissionsMiddleware)
+  @UseGuards(GqlAuthGuard)
   @Mutation(() => ChangePasswordData, { nullable: true })
   async changePassword(
     @Args('currentPassword') currentPassword: string,
     @Args('newPassword') newPassword: string,
-    @Context() ctx: ResolverContext,
+    @CurrentUser() user: User,
     @Args('token', { nullable: true }) token?: string,
   ): Promise<ChangePasswordData> {
-    const user = await this.userService.findById('1');
-
     if (!this.cryptoService.comparePasswords(currentPassword, user.password)) {
       // throw new CustomError({
       //   ...getErrorByKey(ERROR_INVALID_PASSWORD_INPUT),
@@ -125,24 +204,24 @@ export class UsersResolver {
 
   // @Authorized()
   // @UseMiddleware(PermissionsMiddleware)
+  @UseGuards(GqlAuthGuard)
   @Mutation(() => User, { nullable: true })
   async updateProfile(
     @Args('data') updateProfileData: UpdateProfileInputType,
-    @Context() ctx: ResolverContext,
+    @CurrentUser() user: User,
   ): Promise<User> {
-    const user = await this.userService.updateUserProfile(
-      '1',
+    const updatedUser = await this.userService.updateUserProfile(
+      user.id,
       updateProfileData,
     );
-    return user;
+    return updatedUser;
   }
 
   // @Authorized()
   // @UseMiddleware(PermissionsMiddleware)
+  @UseGuards(GqlAuthGuard)
   @Mutation(() => Activate2faData)
-  async activate2fa(@Context() ctx: ResolverContext): Promise<Activate2faData> {
-    const user = await this.userService.findById('1');
-
+  async activate2fa(@CurrentUser() user: User): Promise<Activate2faData> {
     if (user.enabled2fa) {
       // throw new CustomError(getErrorByKey(ERROR_2FA_ALREADY_VERIFIED));
       throw new Error();
@@ -150,7 +229,7 @@ export class UsersResolver {
 
     const secret = authenticator.generateSecret();
 
-    await this.userService.updateUser('1', {
+    await this.userService.updateUser(user.id, {
       secret2fa: secret,
     });
 
@@ -169,14 +248,13 @@ export class UsersResolver {
 
   // @Authorized()
   // @UseMiddleware(PermissionsMiddleware)
+  @UseGuards(GqlAuthGuard)
   @Mutation(() => Boolean)
   async verifyOrDeactivate2fa(
     @Args('token') token: string,
     @Args('enable') enable: boolean,
-    @Context() ctx: ResolverContext,
+    @CurrentUser() user: User,
   ): Promise<boolean> {
-    const user = await this.userService.findById('1');
-
     if (!user.secret2fa) {
       // throw new CustomError(getErrorByKey(ERROR_NO_2FA_SECRET));
       throw new Error();
@@ -206,7 +284,7 @@ export class UsersResolver {
       update2faDTO = { enabled2fa: false, secret2fa: null };
     }
 
-    await this.userService.updateUser('1', update2faDTO);
+    await this.userService.updateUser(user.id, update2faDTO);
 
     return true;
   }

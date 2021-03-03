@@ -1,9 +1,10 @@
 import { Injectable } from '@nestjs/common';
 
 import { InjectRepository } from '@nestjs/typeorm';
+import { Repository } from 'typeorm';
+import { v4 } from 'uuid';
 import { UpdateProfileInputType } from './dto/profile-input.dto';
 import { User } from './models/user.entity';
-import { Repository } from 'typeorm';
 import { CryptoService } from '../crypto/crypto.service';
 import { RegisterInputType } from './dto/register-input.dto';
 
@@ -15,9 +16,25 @@ export class UsersService {
     private cryptoService: CryptoService,
   ) {}
 
-  async findById(id: string) {
+  async findById(id: number) {
     const user = await this.usersRepository
-      .findOne({ id: parseInt(id, 10) })
+      .findOne({ id })
+      .catch((error: Error) => {
+        //logger.error(error);
+        //throw new CustomError(getErrorByKey(ERROR_WHILE_LOOKING_FOR_USER));
+        throw new Error();
+      });
+
+    if (!user) {
+      //throw new CustomError(getErrorByKey(ERROR_USER_NOT_FOUND));
+      throw new Error();
+    }
+    return user;
+  }
+
+  async findByUserId(userId: string) {
+    const user = await this.usersRepository
+      .findOne({ userId })
       .catch((error: Error) => {
         //logger.error(error);
         //throw new CustomError(getErrorByKey(ERROR_WHILE_LOOKING_FOR_USER));
@@ -67,6 +84,7 @@ export class UsersService {
   async createUser(data: RegisterInputType) {
     const user = new User();
 
+    user.userId = v4();
     user.username = data.username.toLowerCase();
     user.displayName = data.username;
     user.email = data.email.toLowerCase();
@@ -89,7 +107,7 @@ export class UsersService {
   }
 
   async updateUserProfile(
-    id: string,
+    id: number,
     updateProfileData: UpdateProfileInputType,
   ) {
     const user: any = await this.findById(id).catch((error: Error) => {
@@ -111,7 +129,7 @@ export class UsersService {
     });
   }
 
-  async updateUser(id: string, data: Partial<User>) {
+  async updateUser(id: number, data: Partial<User>) {
     return this.usersRepository.update(id, data).catch((error: Error) => {
       //logger.error(error);
       //throw new CustomError(getErrorByKey(ERROR_WHILE_UPDATING_USER));

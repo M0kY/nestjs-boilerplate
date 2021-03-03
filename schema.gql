@@ -3,7 +3,7 @@
 # ------------------------------------------------------
 
 type User {
-  id: ID!
+  userId: ID!
   username: String!
   displayName: String!
   email: String!
@@ -41,12 +41,32 @@ type Activate2faData {
   uri: String!
 }
 
+type LoginReturnType {
+  userId: ID!
+  username: String!
+  displayName: String!
+  email: String!
+  firstName: String
+  lastName: String
+  role: Role!
+  activated: Boolean!
+  enabled2fa: Boolean!
+  loginAttempts: Float!
+  locked: Boolean!
+  disabled: Boolean!
+  createdAt: DateTime!
+  updatedAt: DateTime!
+  access_token: String!
+}
+
 type Query {
   me: User
   getAllUsers: [User!]!
 }
 
 type Mutation {
+  register(username: String!, password: String!, email: String!): User
+  login(token: String, password: String!, username: String!): LoginReturnType
   changePassword(token: String, newPassword: String!, currentPassword: String!): ChangePasswordData
   updateProfile(data: UpdateProfileInputType!): User
   activate2fa: Activate2faData!

@@ -11,14 +11,17 @@ import {
 
 @ObjectType()
 @Entity()
-@Unique(['username', 'email'])
+@Unique(['userId', 'username', 'email'])
 export class User {
-  @Field(() => ID)
   @PrimaryGeneratedColumn({ type: 'integer' })
   id: number;
 
+  @Field(() => ID)
+  @Column({ unique: true })
+  userId: string;
+
   @Field()
-  @Column()
+  @Column({ unique: true })
   username: string;
 
   @Field()

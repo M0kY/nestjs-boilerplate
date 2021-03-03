@@ -17,6 +17,6 @@ export default (): ConfigurationInterface => ({
   },
   security: {
     secret: process.env.PASSWORD_HMAC_SECRET || 'DKk+7aSQumRGXy#=4-VS&4a2k',
-    saltRounds: process.env.BCRYPT_SALT_ROUNDS || 12,
+    saltRounds: parseInt(`${process.env.BCRYPT_SALT_ROUNDS}`, 10) || 12,
   },
 });
