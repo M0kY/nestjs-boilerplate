@@ -3,10 +3,10 @@ import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { v4 } from 'uuid';
-import { UpdateProfileInputType } from './dto/profile-input.dto';
+import { UpdateProfileInputType } from './inputs/profile.input';
 import { User } from './models/user.entity';
 import { CryptoService } from '../crypto/crypto.service';
-import { RegisterInputType } from './dto/register-input.dto';
+import { RegisterInputType } from './inputs/register.input.';
 
 @Injectable()
 export class UsersService {

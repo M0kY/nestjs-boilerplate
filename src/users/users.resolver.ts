@@ -1,12 +1,4 @@
-import {
-  Args,
-  Field,
-  ID,
-  Query,
-  Mutation,
-  ObjectType,
-  Resolver,
-} from '@nestjs/graphql';
+import { Args, Query, Mutation, Resolver } from '@nestjs/graphql';
 import { Injectable, UseGuards } from '@nestjs/common';
 
 import { authenticator } from 'otplib';
@@ -25,38 +17,20 @@ import { authenticator } from 'otplib';
 import { UsersService } from './users.service';
 import { User } from '../users/models/user.entity';
 // import { Role } from 'src/enums/Role.enum';
-import { UpdateProfileInputType } from './dto/profile-input.dto';
-import { User2faDTO } from './dto/user-2fa.dto';
+import { UpdateProfileInputType } from './inputs/profile.input';
+import { User2FA } from './interfaces/user-2fa.interface';
 import { CryptoService } from '../crypto/crypto.service';
 import { ConfigService } from '@nestjs/config';
 import { AuthService } from 'src/auth/auth.service';
-import { RegisterInputType } from './dto/register-input.dto';
+import { RegisterInputType } from './inputs/register.input.';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
-import { GqlAuthGuard } from 'src/auth/guards/jwt-auth.guard';
-
-@ObjectType()
-class ChangePasswordData {
-  @Field(() => ID)
-  id: string;
-  @Field(() => Boolean)
-  passwordChanged: boolean;
-}
-
-@ObjectType()
-class Activate2faData {
-  @Field()
-  secret: string;
-  @Field()
-  method: 'TOTP' | 'HOTP';
-  @Field()
-  uri: string;
-}
-
-@ObjectType()
-class LoginReturnType extends User {
-  @Field()
-  access_token: string;
-}
+import { GqlAuthGuard } from 'src/auth/guards/graphql-jwt-auth.guard';
+import { LoginDTO } from './dto/login.dto';
+import { LoginInputType } from './inputs/login.input';
+import { Activate2faDTO } from './dto/activate-2fa.dto';
+import { ChangePasswordDTO } from './dto/change-password.dto';
+import { ResetPasswordInput } from './inputs/reset-password.input';
+import { AccountActivationDTO } from './dto/account-activation.dto';
 
 @Injectable()
 @Resolver(User)
@@ -83,12 +57,8 @@ export class UsersResolver {
     return user;
   }
 
-  @Mutation(() => LoginReturnType, { nullable: true })
-  async login(
-    @Args('username') username: string,
-    @Args('password') password: string,
-    @Args('token', { nullable: true }) token?: string,
-  ) {
+  @Mutation(() => LoginDTO, { nullable: true })
+  async login(@Args() { username, password, token }: LoginInputType) {
     const user = await this.userService.findByUsernameOrEmail(username);
 
     if (!user) {
@@ -138,7 +108,6 @@ export class UsersResolver {
     return { ...user, access_token: jwtTokens.access_token };
   }
 
-  // @Authorized()
   // @UseMiddleware(PermissionsMiddleware)
   @UseGuards(GqlAuthGuard)
   @Query(() => User, { nullable: true })
@@ -154,16 +123,15 @@ export class UsersResolver {
     return (await this.userService.getAll()) || [];
   }
 
-  // @Authorized()
   // @UseMiddleware(PermissionsMiddleware)
   @UseGuards(GqlAuthGuard)
-  @Mutation(() => ChangePasswordData, { nullable: true })
+  @Mutation(() => ChangePasswordDTO, { nullable: true })
   async changePassword(
     @Args('currentPassword') currentPassword: string,
     @Args('newPassword') newPassword: string,
     @CurrentUser() user: User,
     @Args('token', { nullable: true }) token?: string,
-  ): Promise<ChangePasswordData> {
+  ): Promise<ChangePasswordDTO> {
     if (!this.cryptoService.comparePasswords(currentPassword, user.password)) {
       // throw new CustomError({
       //   ...getErrorByKey(ERROR_INVALID_PASSWORD_INPUT),
@@ -199,10 +167,9 @@ export class UsersResolver {
 
     await this.userService.updatePassword(user, newPassword);
 
-    return { id: user.id.toString(), passwordChanged: true };
+    return { userId: user.userId, passwordChanged: true };
   }
 
-  // @Authorized()
   // @UseMiddleware(PermissionsMiddleware)
   @UseGuards(GqlAuthGuard)
   @Mutation(() => User, { nullable: true })
@@ -217,11 +184,10 @@ export class UsersResolver {
     return updatedUser;
   }
 
-  // @Authorized()
   // @UseMiddleware(PermissionsMiddleware)
   @UseGuards(GqlAuthGuard)
-  @Mutation(() => Activate2faData)
-  async activate2fa(@CurrentUser() user: User): Promise<Activate2faData> {
+  @Mutation(() => Activate2faDTO)
+  async activate2fa(@CurrentUser() user: User): Promise<Activate2faDTO> {
     if (user.enabled2fa) {
       // throw new CustomError(getErrorByKey(ERROR_2FA_ALREADY_VERIFIED));
       throw new Error();
@@ -246,7 +212,6 @@ export class UsersResolver {
     };
   }
 
-  // @Authorized()
   // @UseMiddleware(PermissionsMiddleware)
   @UseGuards(GqlAuthGuard)
   @Mutation(() => Boolean)
@@ -267,7 +232,7 @@ export class UsersResolver {
       throw new Error();
     }
 
-    let update2faDTO: User2faDTO = {};
+    let updated2fa: User2FA = {};
 
     if (enable) {
       if (user.enabled2fa) {
@@ -275,17 +240,110 @@ export class UsersResolver {
         throw new Error();
       }
 
-      update2faDTO = { enabled2fa: true };
+      updated2fa = { enabled2fa: true };
     } else {
       if (!user.enabled2fa) {
         // throw new CustomError(getErrorByKey(ERROR_2FA_NOT_ACTIVE));
         throw new Error();
       }
-      update2faDTO = { enabled2fa: false, secret2fa: null };
+      updated2fa = { enabled2fa: false, secret2fa: null };
     }
 
-    await this.userService.updateUser(user.id, update2faDTO);
+    await this.userService.updateUser(user.id, updated2fa);
 
     return true;
+  }
+
+  @Mutation(() => AccountActivationDTO)
+  async activate(
+    @Args('userId') userId: string,
+    @Args('token') token: string,
+  ): Promise<AccountActivationDTO> {
+    // const id = await redis
+    //   .get(USER_ACTIVATION_PREFIX + token)
+    //   .catch((error: Error) => {
+    //     // logger.error(error);
+    //     // throw new CustomError(getErrorByKey(ERROR_WHILE_REDIS_LOOKUP));
+    //   });
+
+    // if (!id || id !== userId) {
+    //   // throw new CustomError(getErrorByKey(ERROR_INVALID_TOKEN));
+    // }
+
+    const user = await this.userService.findByUserId(userId);
+
+    if (!user) {
+      // throw new CustomError(getErrorByKey(ERROR_USER_NOT_FOUND));
+      throw new Error();
+    }
+
+    if (user.activated) {
+      // throw new CustomError(getErrorByKey(ERROR_USER_ALREADY_ACTIVE));
+      throw new Error();
+    }
+
+    await this.userService.updateUser(user.id, { activated: true });
+    const updatedUser = await this.userService.findByUserId(userId);
+    // await redis.del(USER_ACTIVATION_PREFIX + token).catch((error: Error) => {
+    //   // logger.error(error);
+    //   // throw new CustomError(getErrorByKey(ERROR_WHILE_REDIS_DELETE));
+    // });
+
+    return { userId, activated: updatedUser.activated };
+  }
+
+  @Mutation(() => Boolean)
+  async resendActivationLink(@Args('email') email: string): Promise<boolean> {
+    const user = await this.userService.findByEmail(email);
+    if (user && !user.activated) {
+      // Mail.sendActivationMail(user);
+    }
+
+    return true;
+  }
+
+  @Mutation(() => Boolean)
+  async resetPasswordRequest(@Args('email') email: string): Promise<boolean> {
+    const user = await this.userService.findByEmail(email);
+    if (user) {
+      // Mail.sendPasswordResetMail(user);
+    }
+
+    return true;
+  }
+
+  @Mutation(() => ChangePasswordDTO)
+  async resetPassword(
+    @Args() { userId, resetToken, newPassword }: ResetPasswordInput,
+  ): Promise<ChangePasswordDTO> {
+    // const id = await redis
+    //   .get(USER_RESET_PASSWORD_PREFIX + resetToken)
+    //   .catch((error: Error) => {
+    //     // logger.error(error);
+    //     // throw new CustomError(getErrorByKey(ERROR_WHILE_REDIS_DELETE));
+    //   });
+
+    // if (!id || id !== userId) {
+    //   // throw new CustomError(getErrorByKey(ERROR_INVALID_TOKEN));
+    // }
+
+    const user = await this.userService.findByUserId(userId);
+
+    if (!user) {
+      // throw new CustomError(getErrorByKey(ERROR_USER_NOT_FOUND));
+      throw new Error();
+    }
+
+    await this.userService.updateUser(user.id, {
+      password: this.cryptoService.hashPassword(newPassword),
+    });
+    // await redis
+    //   .del(USER_RESET_PASSWORD_PREFIX + resetToken)
+    //   .catch((error: Error) => {
+    //     // logger.error(error);
+    //     // throw new CustomError(getErrorByKey(ERROR_WHILE_REDIS_DELETE));
+    //   });
+
+    return { userId, passwordChanged: true };
   }
 }
