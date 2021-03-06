@@ -8,10 +8,8 @@ import {
 } from 'apollo-server-core';
 import { authenticator } from 'otplib';
 
-// import { PermissionsMiddleware } from '../../middleware/permissionsMIddleware';
 import { UsersService } from './users.service';
 import { User } from '../users/models/user.entity';
-// import { Role } from '../enums/Role.enum';
 import { UpdateProfileInputType } from './inputs/profile.input';
 import { User2FA } from './interfaces/user-2fa.interface';
 import { CryptoService } from '../crypto/crypto.service';
@@ -31,14 +29,24 @@ import {
   ERROR_2FA_TOKEN_REQUIRED,
   ERROR_INVALID_2FA_TOKEN,
   ERROR_INVALID_LOGIN,
+  ERROR_INVALID_TOKEN,
   ERROR_NO_2FA_SECRET,
   ERROR_USER_ALREADY_ACTIVE,
   ERROR_USER_NOT_FOUND,
+  ERROR_WHILE_REDIS_DELETE,
+  ERROR_WHILE_REDIS_LOOKUP,
 } from '../errors/errorCodes';
 import { Roles } from 'src/Roles/roles.decorator';
 import { Role } from 'src/Roles/Role.enum';
 import { RolesGuard } from 'src/Roles/roles.guard';
 import { UserStatusGuard } from './guards/user-status.guard';
+import {
+  USER_ACTIVATION_PREFIX,
+  USER_RESET_PASSWORD_PREFIX,
+} from '../redis/constants/redisPrefixes';
+import { DatabaseError } from 'src/errors/customErrors';
+import { RedisService } from 'src/redis/redis.service';
+import { MailService } from 'src/mail/mail.service';
 
 @Injectable()
 @Resolver(User)
@@ -48,6 +56,8 @@ export class UsersResolver {
     private readonly authService: AuthService,
     private readonly configService: ConfigService,
     private readonly cryptoService: CryptoService,
+    private readonly redisService: RedisService,
+    private readonly mailService: MailService,
   ) {}
 
   private readonly logger = new Logger(UsersResolver.name);
@@ -62,7 +72,7 @@ export class UsersResolver {
       password,
     });
 
-    // Mail.sendPasswordResetMail(user);
+    this.mailService.sendActivationMail(user);
 
     return user;
   }
@@ -113,7 +123,6 @@ export class UsersResolver {
     return { ...user, access_token: jwtTokens.access_token };
   }
 
-  // @UseMiddleware(PermissionsMiddleware)
   @UseGuards(UserStatusGuard)
   @UseGuards(GqlAuthGuard)
   @Query(() => User, { nullable: true })
@@ -121,17 +130,16 @@ export class UsersResolver {
     return await this.userService.findById(user.id);
   }
 
-  // @UseMiddleware(PermissionsMiddleware)
-  @UseGuards(UserStatusGuard)
-  @Roles(Role.USER)
+  @Roles(Role.ADMIN)
   @UseGuards(RolesGuard)
   @UseGuards(GqlAuthGuard)
+  @UseGuards(UserStatusGuard)
   @Query(() => [User])
   async getAllUsers(): Promise<User[]> {
     return (await this.userService.getAll()) || [];
   }
 
-  // @UseMiddleware(PermissionsMiddleware)
+  @UseGuards(UserStatusGuard)
   @UseGuards(GqlAuthGuard)
   @Mutation(() => ChangePasswordDTO, { nullable: true })
   async changePassword(
@@ -172,7 +180,7 @@ export class UsersResolver {
     return { userId: user.userId, passwordChanged: true };
   }
 
-  // @UseMiddleware(PermissionsMiddleware)
+  @UseGuards(UserStatusGuard)
   @UseGuards(GqlAuthGuard)
   @Mutation(() => User, { nullable: true })
   async updateProfile(
@@ -186,7 +194,7 @@ export class UsersResolver {
     return updatedUser;
   }
 
-  // @UseMiddleware(PermissionsMiddleware)
+  @UseGuards(UserStatusGuard)
   @UseGuards(GqlAuthGuard)
   @Mutation(() => Activate2faDTO)
   async activate2fa(@CurrentUser() user: User): Promise<Activate2faDTO> {
@@ -213,7 +221,7 @@ export class UsersResolver {
     };
   }
 
-  // @UseMiddleware(PermissionsMiddleware)
+  @UseGuards(UserStatusGuard)
   @UseGuards(GqlAuthGuard)
   @Mutation(() => Boolean)
   async verifyOrDeactivate2fa(
@@ -256,16 +264,16 @@ export class UsersResolver {
     @Args('userId') userId: string,
     @Args('token') token: string,
   ): Promise<AccountActivationDTO> {
-    // const id = await redis
-    //   .get(USER_ACTIVATION_PREFIX + token)
-    //   .catch((error: Error) => {
-    //     // logger.error(error);
-    //     // throw new CustomError(ERROR_WHILE_REDIS_LOOKUP));
-    //   });
+    const id = await this.redisService
+      .get(USER_ACTIVATION_PREFIX + token)
+      .catch((error: Error) => {
+        this.logger.error(error);
+        throw new DatabaseError(ERROR_WHILE_REDIS_LOOKUP);
+      });
 
-    // if (!id || id !== userId) {
-    //   // throw new CustomError(ERROR_INVALID_TOKEN));
-    // }
+    if (!id || id !== userId) {
+      throw new ForbiddenError(ERROR_INVALID_TOKEN);
+    }
 
     const user = await this.userService.findByUserId(userId);
 
@@ -279,10 +287,12 @@ export class UsersResolver {
 
     await this.userService.updateUser(user.id, { activated: true });
 
-    // await redis.del(USER_ACTIVATION_PREFIX + token).catch((error: Error) => {
-    //   // logger.error(error);
-    //   // throw new CustomError(ERROR_WHILE_REDIS_DELETE));
-    // });
+    await this.redisService
+      .del(USER_ACTIVATION_PREFIX + token)
+      .catch((error: Error) => {
+        this.logger.error(error);
+        throw new DatabaseError(ERROR_WHILE_REDIS_DELETE);
+      });
 
     return { userId, activated: true };
   }
@@ -291,7 +301,7 @@ export class UsersResolver {
   async resendActivationLink(@Args('email') email: string): Promise<boolean> {
     const user = await this.userService.findByEmail(email);
     if (user && !user.activated) {
-      // Mail.sendActivationMail(user);
+      this.mailService.sendActivationMail(user);
     }
 
     return true;
@@ -301,7 +311,7 @@ export class UsersResolver {
   async resetPasswordRequest(@Args('email') email: string): Promise<boolean> {
     const user = await this.userService.findByEmail(email);
     if (user) {
-      // Mail.sendPasswordResetMail(user);
+      this.mailService.sendPasswordResetMail(user);
     }
 
     return true;
@@ -311,16 +321,16 @@ export class UsersResolver {
   async resetPassword(
     @Args() { userId, resetToken, newPassword }: ResetPasswordInput,
   ): Promise<ChangePasswordDTO> {
-    // const id = await redis
-    //   .get(USER_RESET_PASSWORD_PREFIX + resetToken)
-    //   .catch((error: Error) => {
-    //     // logger.error(error);
-    //     // throw new CustomError(ERROR_WHILE_REDIS_DELETE));
-    //   });
+    const id = await this.redisService
+      .get(USER_RESET_PASSWORD_PREFIX + resetToken)
+      .catch((error: Error) => {
+        this.logger.error(error);
+        throw new DatabaseError(ERROR_WHILE_REDIS_DELETE);
+      });
 
-    // if (!id || id !== userId) {
-    //   // throw new CustomError(ERROR_INVALID_TOKEN));
-    // }
+    if (!id || id !== userId) {
+      throw new ForbiddenError(ERROR_INVALID_TOKEN);
+    }
 
     const user = await this.userService.findByUserId(userId);
 
@@ -331,12 +341,12 @@ export class UsersResolver {
     await this.userService.updateUser(user.id, {
       password: this.cryptoService.hashPassword(newPassword),
     });
-    // await redis
-    //   .del(USER_RESET_PASSWORD_PREFIX + resetToken)
-    //   .catch((error: Error) => {
-    //     // logger.error(error);
-    //     // throw new CustomError(ERROR_WHILE_REDIS_DELETE));
-    //   });
+    await this.redisService
+      .del(USER_RESET_PASSWORD_PREFIX + resetToken)
+      .catch((error: Error) => {
+        this.logger.error(error);
+        throw new DatabaseError(ERROR_WHILE_REDIS_DELETE);
+      });
 
     return { userId, passwordChanged: true };
   }

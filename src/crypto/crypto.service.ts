@@ -18,7 +18,7 @@ export class CryptoService {
     const hmacPasswordHash = this.generateHmacSha256Hash(password);
     return bcrypt.hashSync(
       hmacPasswordHash,
-      this.configService.get('security.saltRounds') as number | string,
+      this.configService.get('security.saltRounds') as number,
     );
   };
 

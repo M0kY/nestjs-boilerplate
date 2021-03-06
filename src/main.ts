@@ -1,16 +1,20 @@
+import { Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { NestFactory } from '@nestjs/core';
 import * as compression from 'compression';
 import * as helmet from 'helmet';
 import { AppModule } from './app.module';
+import { corsOptions } from './utils/corsOptions';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
 
   const configService = app.get(ConfigService);
+  const logger = new Logger(AppModule.name);
+
   const port = configService.get('port');
 
-  app.enableCors();
+  app.enableCors(corsOptions);
   app.use(
     helmet({
       contentSecurityPolicy: {
@@ -32,6 +36,6 @@ async function bootstrap() {
   app.use(compression());
 
   await app.listen(port);
-  console.log(`Server running on port ${port}`);
+  logger.log(`Server is running on: ${await app.getUrl()}`);
 }
 bootstrap();

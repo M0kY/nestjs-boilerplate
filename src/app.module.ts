@@ -6,6 +6,7 @@ import { UsersModule } from './users/users.module';
 import { CryptoModule } from './crypto/crypto.module';
 import { AuthModule } from './auth/auth.module';
 import configuration from './config/configuration';
+import { corsOptions } from './utils/corsOptions';
 
 @Module({
   imports: [
@@ -31,10 +32,15 @@ import configuration from './config/configuration';
         autoLoadEntities: true,
       }),
     }),
-    GraphQLModule.forRoot({
-      cors: true,
-      installSubscriptionHandlers: true,
-      autoSchemaFile: 'schema.gql',
+    GraphQLModule.forRootAsync({
+      imports: [ConfigModule],
+      inject: [ConfigService],
+      useFactory: async (configService: ConfigService) => ({
+        cors: corsOptions,
+        installSubscriptionHandlers: true,
+        autoSchemaFile: 'schema.gql',
+        path: configService.get('graphqlEndpoint'),
+      }),
     }),
     UsersModule,
     UsersModule,

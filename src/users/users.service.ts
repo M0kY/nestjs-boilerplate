@@ -1,14 +1,15 @@
 import { Injectable, Logger } from '@nestjs/common';
-
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { v4 } from 'uuid';
+import { AuthenticationError } from 'apollo-server-core';
 import { UpdateProfileInputType } from './inputs/profile.input';
 import { User } from './models/user.entity';
 import { CryptoService } from '../crypto/crypto.service';
 import { RegisterInputType } from './inputs/register.input.';
 import { DatabaseError } from '../errors/customErrors';
 import {
+  ERROR_USER_ALREADY_EXISTS,
   ERROR_USER_NOT_FOUND,
   ERROR_WHILE_CREATING_USER,
   ERROR_WHILE_LOOKING_FOR_USER,
@@ -89,10 +90,12 @@ export class UsersService {
     user.email = data.email.toLowerCase();
     user.password = this.cryptoService.hashPassword(data.password);
 
-    return this.usersRepository.save(user).catch((error: Error) => {
+    return this.usersRepository.save(user).catch((error: any) => {
       this.logger.error(error.message);
+      if (error.code === '23505') {
+        throw new AuthenticationError(ERROR_USER_ALREADY_EXISTS);
+      }
       throw new DatabaseError(ERROR_WHILE_CREATING_USER);
-      throw new Error();
     });
   }
 

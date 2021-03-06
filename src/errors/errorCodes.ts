@@ -1,6 +1,7 @@
 export const ERROR_CORS_REQUEST_BLOCKED = 'Not allowed by CORS.';
 export const ERROR_INVALID_LOGIN = 'Invalid username or password.';
 export const ERROR_INVALID_TOKEN = 'Invalid token.';
+export const ERROR_USER_ALREADY_EXISTS = 'User already exists.';
 export const ERROR_USER_NOT_FOUND = 'User not found.';
 export const ERROR_USER_ALREADY_ACTIVE = 'User already active.';
 export const ERROR_USER_NOT_ACTIVE = 'User not active.';
