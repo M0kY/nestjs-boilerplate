@@ -25,7 +25,7 @@ import configuration from './config/configuration';
         password: configService.get('database.password'),
         entities: ['dist/**/*.entity{.ts,.js}'],
         synchronize: configService.get('database.synchronize'),
-        dropSchema: true,
+        dropSchema: configService.get('database.dropSchema'),
         retryAttempts: 10,
         retryDelay: 1000,
         autoLoadEntities: true,

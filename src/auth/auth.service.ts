@@ -14,8 +14,8 @@ export class AuthService {
     private readonly jwtService: JwtService,
   ) {}
 
-  async validateUser(id: number): Promise<User | null> {
-    const user = await this.usersService.findById(id);
+  async validateUser(userId: string): Promise<User | null> {
+    const user = await this.usersService.findByUserId(userId);
     return user || null;
   }
 

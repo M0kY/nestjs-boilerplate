@@ -1,36 +1,44 @@
 import { Args, Query, Mutation, Resolver } from '@nestjs/graphql';
-import { Injectable, UseGuards } from '@nestjs/common';
-
+import { Injectable, Logger, UseGuards } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
+import {
+  ApolloError,
+  AuthenticationError,
+  ForbiddenError,
+} from 'apollo-server-core';
 import { authenticator } from 'otplib';
-
-// import {
-//   CustomError,
-//   getErrorByKey,
-//   ERROR_INVALID_PASSWORD_INPUT,
-//   ERROR_INVALID_2FA_TOKEN,
-//   ERROR_NO_2FA_SECRET,
-//   ERROR_2FA_ALREADY_VERIFIED,
-//   ERROR_2FA_NOT_ACTIVE,
-// } from '../../constants/errorCodes';
 
 // import { PermissionsMiddleware } from '../../middleware/permissionsMIddleware';
 import { UsersService } from './users.service';
 import { User } from '../users/models/user.entity';
-// import { Role } from 'src/enums/Role.enum';
+// import { Role } from '../enums/Role.enum';
 import { UpdateProfileInputType } from './inputs/profile.input';
 import { User2FA } from './interfaces/user-2fa.interface';
 import { CryptoService } from '../crypto/crypto.service';
-import { ConfigService } from '@nestjs/config';
-import { AuthService } from 'src/auth/auth.service';
+import { AuthService } from '../auth/auth.service';
 import { RegisterInputType } from './inputs/register.input.';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
-import { GqlAuthGuard } from 'src/auth/guards/graphql-jwt-auth.guard';
+import { GqlAuthGuard } from '../auth/guards/graphql-jwt-auth.guard';
 import { LoginDTO } from './dto/login.dto';
 import { LoginInputType } from './inputs/login.input';
 import { Activate2faDTO } from './dto/activate-2fa.dto';
 import { ChangePasswordDTO } from './dto/change-password.dto';
 import { ResetPasswordInput } from './inputs/reset-password.input';
 import { AccountActivationDTO } from './dto/account-activation.dto';
+import {
+  ERROR_2FA_ALREADY_VERIFIED,
+  ERROR_2FA_NOT_ACTIVE,
+  ERROR_2FA_TOKEN_REQUIRED,
+  ERROR_INVALID_2FA_TOKEN,
+  ERROR_INVALID_LOGIN,
+  ERROR_NO_2FA_SECRET,
+  ERROR_USER_ALREADY_ACTIVE,
+  ERROR_USER_NOT_FOUND,
+} from '../errors/errorCodes';
+import { Roles } from 'src/Roles/roles.decorator';
+import { Role } from 'src/Roles/Role.enum';
+import { RolesGuard } from 'src/Roles/roles.guard';
+import { UserStatusGuard } from './guards/user-status.guard';
 
 @Injectable()
 @Resolver(User)
@@ -41,6 +49,8 @@ export class UsersResolver {
     private readonly configService: ConfigService,
     private readonly cryptoService: CryptoService,
   ) {}
+
+  private readonly logger = new Logger(UsersResolver.name);
 
   @Mutation(() => User, { nullable: true })
   async register(
@@ -62,29 +72,25 @@ export class UsersResolver {
     const user = await this.userService.findByUsernameOrEmail(username);
 
     if (!user) {
-      // throw new CustomError(getErrorByKey(ERROR_INVALID_LOGIN));
-      throw new Error();
+      throw new AuthenticationError(ERROR_INVALID_LOGIN);
     }
 
     const valid = this.cryptoService.comparePasswords(password, user.password);
 
     if (!valid) {
       await this.userService.failedLoginAttempt(user);
-      // throw new CustomError(getErrorByKey(ERROR_INVALID_LOGIN));
-      throw new Error();
+      throw new AuthenticationError(ERROR_INVALID_LOGIN);
     }
 
     if (user.enabled2fa) {
       if (!token) {
         await this.userService.failedLoginAttempt(user);
-        // throw new CustomError(getErrorByKey(ERROR_2FA_TOKEN_REQUIRED));
-        throw new Error();
+        throw new AuthenticationError(ERROR_2FA_TOKEN_REQUIRED);
       }
 
       if (!user.secret2fa) {
-        // logger.error(getErrorByKey(ERROR_NO_2FA_SECRET).message, 'LOGIN');
-        // throw new CustomError(getErrorByKey(ERROR_NO_2FA_SECRET));
-        throw new Error();
+        this.logger.error(ERROR_NO_2FA_SECRET, 'LOGIN');
+        throw new ApolloError(ERROR_NO_2FA_SECRET);
       }
 
       const isTokenValid = authenticator.verify({
@@ -94,8 +100,7 @@ export class UsersResolver {
 
       if (!isTokenValid) {
         await this.userService.failedLoginAttempt(user);
-        // throw new CustomError(getErrorByKey(ERROR_INVALID_2FA_TOKEN));
-        throw new Error();
+        throw new AuthenticationError(ERROR_INVALID_2FA_TOKEN);
       }
     }
 
@@ -109,14 +114,17 @@ export class UsersResolver {
   }
 
   // @UseMiddleware(PermissionsMiddleware)
+  @UseGuards(UserStatusGuard)
   @UseGuards(GqlAuthGuard)
   @Query(() => User, { nullable: true })
   async me(@CurrentUser() user: User): Promise<User | null> {
     return await this.userService.findById(user.id);
   }
 
-  // @Authorized(Role.ADMIN)
   // @UseMiddleware(PermissionsMiddleware)
+  @UseGuards(UserStatusGuard)
+  @Roles(Role.USER)
+  @UseGuards(RolesGuard)
   @UseGuards(GqlAuthGuard)
   @Query(() => [User])
   async getAllUsers(): Promise<User[]> {
@@ -134,24 +142,19 @@ export class UsersResolver {
   ): Promise<ChangePasswordDTO> {
     if (!this.cryptoService.comparePasswords(currentPassword, user.password)) {
       // throw new CustomError({
-      //   ...getErrorByKey(ERROR_INVALID_PASSWORD_INPUT),
+      //   ...ERROR_INVALID_PASSWORD_INPUT),
       //   properties: { invalidArgument: 'currentPassword' },
       // });
     }
 
     if (user.enabled2fa) {
       if (!token) {
-        // throw new CustomError(getErrorByKey(ERROR_INVALID_2FA_TOKEN));
-        throw new Error();
+        throw new AuthenticationError(ERROR_INVALID_2FA_TOKEN);
       }
 
       if (!user.secret2fa) {
-        // logger.error(
-        //   getErrorByKey(ERROR_NO_2FA_SECRET).message,
-        //   'CHANGE PASSWORD',
-        // );
-        // throw new CustomError(getErrorByKey(ERROR_NO_2FA_SECRET));
-        throw new Error();
+        this.logger.error(ERROR_NO_2FA_SECRET, 'CHANGE PASSWORD');
+        throw new ApolloError(ERROR_NO_2FA_SECRET);
       }
 
       const isTokenValid = authenticator.verify({
@@ -160,8 +163,7 @@ export class UsersResolver {
       });
 
       if (!isTokenValid) {
-        // throw new CustomError(getErrorByKey(ERROR_INVALID_2FA_TOKEN));
-        throw new Error();
+        throw new AuthenticationError(ERROR_INVALID_2FA_TOKEN);
       }
     }
 
@@ -189,8 +191,7 @@ export class UsersResolver {
   @Mutation(() => Activate2faDTO)
   async activate2fa(@CurrentUser() user: User): Promise<Activate2faDTO> {
     if (user.enabled2fa) {
-      // throw new CustomError(getErrorByKey(ERROR_2FA_ALREADY_VERIFIED));
-      throw new Error();
+      throw new ForbiddenError(ERROR_2FA_ALREADY_VERIFIED);
     }
 
     const secret = authenticator.generateSecret();
@@ -221,30 +222,26 @@ export class UsersResolver {
     @CurrentUser() user: User,
   ): Promise<boolean> {
     if (!user.secret2fa) {
-      // throw new CustomError(getErrorByKey(ERROR_NO_2FA_SECRET));
-      throw new Error();
+      throw new ApolloError(ERROR_NO_2FA_SECRET);
     }
 
     const isValid = authenticator.verify({ token, secret: user.secret2fa });
 
     if (!isValid) {
-      // throw new CustomError(getErrorByKey(ERROR_INVALID_2FA_TOKEN));
-      throw new Error();
+      throw new AuthenticationError(ERROR_INVALID_2FA_TOKEN);
     }
 
     let updated2fa: User2FA = {};
 
     if (enable) {
       if (user.enabled2fa) {
-        // throw new CustomError(getErrorByKey(ERROR_2FA_ALREADY_VERIFIED));
-        throw new Error();
+        throw new ForbiddenError(ERROR_2FA_ALREADY_VERIFIED);
       }
 
       updated2fa = { enabled2fa: true };
     } else {
       if (!user.enabled2fa) {
-        // throw new CustomError(getErrorByKey(ERROR_2FA_NOT_ACTIVE));
-        throw new Error();
+        throw new ForbiddenError(ERROR_2FA_NOT_ACTIVE);
       }
       updated2fa = { enabled2fa: false, secret2fa: null };
     }
@@ -263,33 +260,31 @@ export class UsersResolver {
     //   .get(USER_ACTIVATION_PREFIX + token)
     //   .catch((error: Error) => {
     //     // logger.error(error);
-    //     // throw new CustomError(getErrorByKey(ERROR_WHILE_REDIS_LOOKUP));
+    //     // throw new CustomError(ERROR_WHILE_REDIS_LOOKUP));
     //   });
 
     // if (!id || id !== userId) {
-    //   // throw new CustomError(getErrorByKey(ERROR_INVALID_TOKEN));
+    //   // throw new CustomError(ERROR_INVALID_TOKEN));
     // }
 
     const user = await this.userService.findByUserId(userId);
 
     if (!user) {
-      // throw new CustomError(getErrorByKey(ERROR_USER_NOT_FOUND));
-      throw new Error();
+      throw new AuthenticationError(ERROR_USER_NOT_FOUND);
     }
 
     if (user.activated) {
-      // throw new CustomError(getErrorByKey(ERROR_USER_ALREADY_ACTIVE));
-      throw new Error();
+      throw new ForbiddenError(ERROR_USER_ALREADY_ACTIVE);
     }
 
     await this.userService.updateUser(user.id, { activated: true });
-    const updatedUser = await this.userService.findByUserId(userId);
+
     // await redis.del(USER_ACTIVATION_PREFIX + token).catch((error: Error) => {
     //   // logger.error(error);
-    //   // throw new CustomError(getErrorByKey(ERROR_WHILE_REDIS_DELETE));
+    //   // throw new CustomError(ERROR_WHILE_REDIS_DELETE));
     // });
 
-    return { userId, activated: updatedUser.activated };
+    return { userId, activated: true };
   }
 
   @Mutation(() => Boolean)
@@ -320,18 +315,17 @@ export class UsersResolver {
     //   .get(USER_RESET_PASSWORD_PREFIX + resetToken)
     //   .catch((error: Error) => {
     //     // logger.error(error);
-    //     // throw new CustomError(getErrorByKey(ERROR_WHILE_REDIS_DELETE));
+    //     // throw new CustomError(ERROR_WHILE_REDIS_DELETE));
     //   });
 
     // if (!id || id !== userId) {
-    //   // throw new CustomError(getErrorByKey(ERROR_INVALID_TOKEN));
+    //   // throw new CustomError(ERROR_INVALID_TOKEN));
     // }
 
     const user = await this.userService.findByUserId(userId);
 
     if (!user) {
-      // throw new CustomError(getErrorByKey(ERROR_USER_NOT_FOUND));
-      throw new Error();
+      throw new AuthenticationError(ERROR_USER_NOT_FOUND);
     }
 
     await this.userService.updateUser(user.id, {
@@ -341,7 +335,7 @@ export class UsersResolver {
     //   .del(USER_RESET_PASSWORD_PREFIX + resetToken)
     //   .catch((error: Error) => {
     //     // logger.error(error);
-    //     // throw new CustomError(getErrorByKey(ERROR_WHILE_REDIS_DELETE));
+    //     // throw new CustomError(ERROR_WHILE_REDIS_DELETE));
     //   });
 
     return { userId, passwordChanged: true };

@@ -1,5 +1,5 @@
 import { Field, ID, ObjectType } from '@nestjs/graphql';
-import { Role } from 'src/enums/Role.enum';
+import { Role } from '../../Roles/Role.enum';
 import {
   Entity,
   PrimaryGeneratedColumn,
